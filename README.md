@@ -33,6 +33,27 @@ python -m pip install -r requirements-streamlit.txt
 streamlit run app.py
 ```
 
+## Acceso desde otra maquina
+
+En un VPS, ejecuta el servidor escuchando en todas las interfaces:
+
+```bash
+BIOMAP_HOST=0.0.0.0 BIOMAP_PORT=8501 python3 server.py
+```
+
+Despues abre desde tu laptop:
+
+```text
+http://IP_PUBLICA_DEL_VPS:8501
+```
+
+Si no carga, abre el puerto en el firewall del VPS:
+
+```bash
+sudo ufw allow 8501/tcp
+sudo ufw status
+```
+
 Busqueda sugerida:
 
 ```text

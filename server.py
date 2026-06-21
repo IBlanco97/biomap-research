@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -11,8 +12,8 @@ from biomedical_discovery.hypothesis import generate_hypotheses
 from biomedical_discovery.pubmed import PubMedError, search_and_fetch
 from biomedical_discovery.sample_data import SAMPLE_ARTICLES
 
-HOST = "127.0.0.1"
-PORT = 8501
+HOST = os.getenv("BIOMAP_HOST", "127.0.0.1")
+PORT = int(os.getenv("BIOMAP_PORT", "8501"))
 
 
 class AppHandler(BaseHTTPRequestHandler):
