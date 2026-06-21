@@ -4,12 +4,13 @@ import html
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from biomedical_discovery.extraction import analyze_articles
 from biomedical_discovery.graphing import build_relations, relation_rows
 from biomedical_discovery.hypothesis import generate_hypotheses
 from biomedical_discovery.pubmed import PubMedError, search_and_fetch
+from biomedical_discovery.reporting import build_report, relations_to_csv
 from biomedical_discovery.sample_data import SAMPLE_ARTICLES
 
 HOST = os.getenv("BIOMAP_HOST", "127.0.0.1")
@@ -18,30 +19,45 @@ PORT = int(os.getenv("BIOMAP_PORT", "8501"))
 
 class AppHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
             self._send_text("ok\n")
             return
-        self._send_html(render_page())
+
+        query, max_results, use_sample, email = parse_request_values(parse_qs(parsed.query), default_use_sample=True)
+        analyses, relations, error, source = run_analysis(query, max_results, use_sample, email)
+
+        if parsed.path == "/api/analyze":
+            report = build_report(analyses, relations, query, max_results, source)
+            if error:
+                report["warning"] = error
+            self._send_json(report)
+            return
+
+        if parsed.path == "/export/report.json":
+            report = build_report(analyses, relations, query, max_results, source)
+            if error:
+                report["warning"] = error
+            self._send_json(report, filename="biomap-report.json")
+            return
+
+        if parsed.path == "/export/relations.csv":
+            self._send_text(
+                relations_to_csv(relations),
+                content_type="text/csv; charset=utf-8",
+                filename="biomap-relations.csv",
+            )
+            return
+
+        self._send_html(render_page(query, max_results, use_sample, email or "", analyses, relations, error))
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length).decode("utf-8")
         form = parse_qs(body)
 
-        query = form.get("query", ["genetic syndromes childhood leukemia treatment outcomes"])[0]
-        max_results = int(form.get("max_results", ["12"])[0])
-        use_sample = form.get("use_sample", ["off"])[0] == "on"
-        email = form.get("email", [""])[0].strip() or None
-
-        error = ""
-        try:
-            articles = SAMPLE_ARTICLES if use_sample else search_and_fetch(query, max_results=max_results, email=email)
-        except PubMedError as exc:
-            articles = SAMPLE_ARTICLES
-            error = f"{exc}. Mostrando datos demo."
-
-        analyses = analyze_articles(articles)
-        relations = build_relations(analyses)
+        query, max_results, use_sample, email = parse_request_values(form, default_use_sample=False)
+        analyses, relations, error, _source = run_analysis(query, max_results, use_sample, email)
         self._send_html(render_page(query, max_results, use_sample, email or "", analyses, relations, error))
 
     def log_message(self, format: str, *args: object) -> None:
@@ -55,13 +71,57 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _send_text(self, content: str) -> None:
+    def _send_text(self, content: str, content_type: str = "text/plain; charset=utf-8", filename: str = "") -> None:
         payload = content.encode("utf-8")
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers()
         self.wfile.write(payload)
+
+    def _send_json(self, content: dict[str, object], filename: str = "") -> None:
+        payload = json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def parse_request_values(form: dict[str, list[str]], default_use_sample: bool) -> tuple[str, int, bool, str | None]:
+    query = form.get("query", ["genetic syndromes childhood leukemia treatment outcomes"])[0].strip()
+    if not query:
+        query = "genetic syndromes childhood leukemia treatment outcomes"
+
+    try:
+        max_results = int(form.get("max_results", ["12"])[0])
+    except ValueError:
+        max_results = 12
+    max_results = max(1, min(max_results, 50))
+
+    use_sample_value = form.get("use_sample", ["on" if default_use_sample else "off"])[0].lower()
+    use_sample = use_sample_value in {"1", "true", "yes", "on"}
+    email = form.get("email", [""])[0].strip() or None
+    return query, max_results, use_sample, email
+
+
+def run_analysis(query: str, max_results: int, use_sample: bool, email: str | None):
+    error = ""
+    source = "demo" if use_sample else "pubmed"
+    try:
+        articles = SAMPLE_ARTICLES if use_sample else search_and_fetch(query, max_results=max_results, email=email)
+    except PubMedError as exc:
+        articles = SAMPLE_ARTICLES
+        source = "demo"
+        error = f"{exc}. Mostrando datos demo."
+
+    analyses = analyze_articles(articles)
+    relations = build_relations(analyses)
+    return analyses, relations, error, source
 
 
 def render_page(
@@ -146,6 +206,21 @@ def render_page(
       font-weight: 800;
       cursor: pointer;
     }}
+    .actions {{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }}
+    .action-link {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+    }}
     .note {{ margin-top: 12px; padding: 12px; border-radius: 6px; background: var(--soft); color: #23443f; font-size: 13px; }}
     .error {{ margin: 0 0 16px; padding: 12px; border-radius: 6px; background: #fff1e6; color: #7c2d12; }}
     .metrics {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }}
@@ -197,6 +272,7 @@ def render_page(
         <div class="metric"><strong>{len(diseases)}</strong><span>Condiciones</span></div>
         <div class="metric"><strong>{len(rows)}</strong><span>Relaciones</span></div>
       </div>
+      {render_export_links(query, max_results, use_sample)}
       <section>
         <h2>Entidades detectadas</h2>
         <p>Genes</p><div class="chips">{render_chips(genes)}</div>
@@ -236,6 +312,23 @@ def render_chips(values: list[str]) -> str:
     if not values:
         return '<span class="chip">Sin detecciones</span>'
     return "".join(f'<span class="chip">{html.escape(value)}</span>' for value in values)
+
+
+def render_export_links(query: str, max_results: int, use_sample: bool) -> str:
+    params = urlencode(
+        {
+            "query": query,
+            "max_results": str(max_results),
+            "use_sample": "1" if use_sample else "0",
+        }
+    )
+    return (
+        '<div class="actions">'
+        f'<a class="action-link" href="/export/report.json?{params}">Descargar reporte JSON</a>'
+        f'<a class="action-link" href="/export/relations.csv?{params}">Descargar relaciones CSV</a>'
+        f'<a class="action-link" href="/api/analyze?{params}" target="_blank" rel="noreferrer">Ver API JSON</a>'
+        "</div>"
+    )
 
 
 def render_relation_table(rows: list[dict[str, str | int]]) -> str:

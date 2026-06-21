@@ -54,6 +54,21 @@ sudo ufw allow 8501/tcp
 sudo ufw status
 ```
 
+## API y exportacion
+
+Reporte JSON:
+
+```text
+/api/analyze?query=TP53+childhood+leukemia&max_results=10&use_sample=0
+```
+
+Descargas:
+
+```text
+/export/report.json?query=TP53+childhood+leukemia&max_results=10&use_sample=0
+/export/relations.csv?query=TP53+childhood+leukemia&max_results=10&use_sample=0
+```
+
 Busqueda sugerida:
 
 ```text
