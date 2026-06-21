@@ -1,0 +1,16 @@
+[Unit]
+Description=BioMap Research web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/Lab/biomap-research
+Environment=BIOMAP_HOST=0.0.0.0
+Environment=BIOMAP_PORT=8501
+ExecStart=/root/Lab/biomap-research/.venv/bin/python /root/Lab/biomap-research/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

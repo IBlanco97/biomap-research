@@ -18,6 +18,9 @@ PORT = int(os.getenv("BIOMAP_PORT", "8501"))
 
 class AppHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        if self.path == "/health":
+            self._send_text("ok\n")
+            return
         self._send_html(render_page())
 
     def do_POST(self) -> None:
@@ -48,6 +51,14 @@ class AppHandler(BaseHTTPRequestHandler):
         payload = content.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_text(self, content: str) -> None:
+        payload = content.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
